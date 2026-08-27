@@ -7,9 +7,17 @@ your own Codex CLI with your own OpenAI account.
 
 ## Requirements
 
-- **The Codex ACP adapter**, which this plugin drives on your behalf:
+- **The [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp)**,
+  published as
+  [`@agentclientprotocol/codex-acp`](https://www.npmjs.com/package/@agentclientprotocol/codex-acp),
+  which this plugin drives on your behalf:
   ```
   npm i -g @agentclientprotocol/codex-acp
+  ```
+- Verify that the adapter command is available in the same environment that
+  launches Ora:
+  ```
+  codex-acp --version
   ```
 - **A working Codex CLI**, signed in with either a ChatGPT subscription or an
   API key. The adapter bundles a compatible `codex` binary, so a separate
@@ -43,6 +51,11 @@ _inside_ a Codex session (Ora surfaces them as session options), rather than
 from a separate picker — Codex exposes its live model list this way instead of a
 fixed one, so you always see exactly what your account can access.
 
+The plugin's pre-session `agent/listModels` response is intentionally empty. The
+actual model list is returned by ACP `session/new` in `configOptions`, after Ora
+has initialized the adapter and warmed a session. An empty `agent/listModels`
+response therefore does not mean that Codex has no models.
+
 Slash commands you'd use in the Codex CLI directly — `/review`,
 `/review-branch`, `/compact`, `/status`, `/mcp`, `/skills`, and so on — work the
 same way inside an Ora session.
@@ -56,13 +69,40 @@ takes care of getting Codex to pick them up — no manual restart needed.
 
 ## Troubleshooting
 
-- **"Codex's ACP adapter is not installed or not on PATH"** — install it with
-  `npm i -g @agentclientprotocol/codex-acp`, or, if you keep it somewhere
-  non-standard, point the plugin at it with the `ORA_CODEX_ACP_BIN` environment
-  variable.
+- **Ora stays on "Loading…"** — first verify that `codex-acp --version` works
+  from the environment used to launch Ora. The plugin resolves `codex-acp.cmd`
+  on Windows and `codex-acp` elsewhere. If the npm package is installed but the
+  command is missing, reinstall it so npm recreates its executable shim:
+  ```
+  npm uninstall -g @agentclientprotocol/codex-acp
+  npm install -g @agentclientprotocol/codex-acp
+  codex-acp --version
+  ```
+  Then restart Ora, or disable and re-enable the Codex plugin, so its runtime
+  supervisor retries the adapter with the updated `PATH`.
+- **"Codex's ACP adapter is not installed or not on PATH"** — install the
+  official
+  [`@agentclientprotocol/codex-acp`](https://www.npmjs.com/package/@agentclientprotocol/codex-acp)
+  package with `npm i -g @agentclientprotocol/codex-acp`. If you keep it
+  somewhere non-standard, set `ORA_CODEX_ACP_BIN` to the full path of an
+  executable adapter command and restart Ora. On Windows, prefer the generated
+  `codex-acp.cmd` shim rather than pointing directly at the JavaScript file.
+- **`agent/listModels` returns `[]`** — this is expected for Codex. Models are
+  supplied by ACP `session/new` as session configuration options, not by the
+  plugin's pre-session model endpoint. Check the session picker after the ACP
+  handshake completes.
 - **Codex keeps asking you to sign in** — check that `codex` itself is
   authenticated (`codex login` from a terminal), or set `CODEX_API_KEY` /
   `OPENAI_API_KEY`.
+- **The command works in a terminal but not in Ora** — Ora must inherit the
+  directory containing `codex-acp.cmd` / `codex-acp` in its `PATH`. Launch Ora
+  from an environment with the correct `PATH`, or configure `ORA_CODEX_ACP_BIN`
+  before starting Ora. An already-running Ora process does not automatically
+  inherit changes made to the shell environment.
+- **Useful log messages** — search Ora's plugin/runtime log for:
+  `agent startup failed`, `agent_initialize_timeout`,
+  `agent runtime is unavailable`, or
+  `Codex's ACP adapter is not installed or not on PATH`.
 - **A session seems stuck** — stopping and restarting the Codex agent from Ora
   relaunches the adapter cleanly.
 
