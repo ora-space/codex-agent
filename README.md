@@ -106,6 +106,38 @@ takes care of getting Codex to pick them up — no manual restart needed.
 - **A session seems stuck** — stopping and restarting the Codex agent from Ora
   relaunches the adapter cleanly.
 
+## Building from source
+
+```
+deno task build
+deno task package --tag v0.2.0 --repo ora-space/codex-agent
+```
+
+This writes `dist/packages/ora-space.codex-<tag>.orax` and `dist/manifest.toml`
+— the release form of the manifest, which is `orax.toml` plus the download `url`
+and its `sha256`. That file is what the marketplace index needs, and it is
+copied into the marketplace as-is; it can only be written once the package
+exists, so it is generated at package time rather than committed. The release
+workflow uploads both to the GitHub release.
+
+`bundle.config.ts` decides which of the two release shapes is built, and it is
+the only file to change to switch:
+
+| `cli`              | Produces                               | Manifest carries             | At runtime                                 |
+| ------------------ | -------------------------------------- | ---------------------------- | ------------------------------------------ |
+| `"user_installed"` | one `.orax` every host can install     | one `url` / `sha256` pair    | runs the `codex-acp` on the user's `PATH`  |
+| `"bundled"`        | one `.orax` per declared target triple | one `[[targets]]` per triple | runs an adapter shipped inside the package |
+
+This plugin ships `"user_installed"`: `codex-acp` is published on npm and
+installed by the user, so there is no upstream release asset to bundle. Ora's
+marketplace release carries either one universal artifact or per-target
+artifacts, never both, which is why this is one choice per release rather than a
+mix.
+
+`deno task check` type checks, `deno task lint` lints, and `deno task test` runs
+the unit tests; `deno task simulate` drives the plugin the way Ora's host does
+and needs a real `codex-acp` on `PATH`.
+
 ## License
 
 Apache-2.0

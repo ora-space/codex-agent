@@ -77,8 +77,7 @@ call all three methods:
   every `.agents/skills` directory from the working directory up to the
   repository root, the user's `~/.agents/skills`, then a system directory
   (`/etc/codex/skills`) — and restarting is deliberately chosen over modelling
-  exactly when in that chain a rescan happens: a restart is correct
-  regardless.
+  exactly when in that chain a rescan happens: a restart is correct regardless.
 - **`verify_ready`** reports readiness by **returning**; a Consumer says "not
   ready" by throwing. Returning a payload that says "not ready" would be
   recorded as ready.
@@ -88,12 +87,12 @@ call all three methods:
   that already rescanned, which would tear down the sessions that came back from
   the first restart.
 
-`SKILLS_RESOURCE.workspaceRelativePath` is `.agents/skills` — the repository-root
-directory in Codex's own precedence chain. Ora only manages that surface: the
-user- and system-level directories are Preserved State from this plugin's point
-of view, and declaring either would be a mistake — Ora fully owns what it
-materializes into a declared Resource, so it would reconcile away Skills another
-tool put there.
+`SKILLS_RESOURCE.workspaceRelativePath` is `.agents/skills` — the
+repository-root directory in Codex's own precedence chain. Ora only manages that
+surface: the user- and system-level directories are Preserved State from this
+plugin's point of view, and declaring either would be a mistake — Ora fully owns
+what it materializes into a declared Resource, so it would reconcile away Skills
+another tool put there.
 
 ## Resolving the adapter on Windows — always include `.bat`
 
@@ -215,7 +214,8 @@ Ora parses and validates that table today but does not yet enforce it.
 
 ## Working on this repository
 
-- `deno task check` / `lint` / `format` / `test` / `simulate` / `build`.
+- `deno task check` / `lint` / `format` / `test` / `simulate` / `build` /
+  `package`.
 - The SDK is imported from its published JSR package and pinned in `deno.json`;
   keep `deno.lock` synchronized when changing the SDK version — see the root
   `../AGENTS.md` before bumping it, since the Effect API and process-ownership
@@ -231,3 +231,26 @@ Ora parses and validates that table today but does not yet enforce it.
 - Bump `orax.toml` `version` before handing someone a `.orax` to import.
   `install_local` refuses a version that is already installed and never retires
   older ones, so reusing a number silently leaves the old code running.
+
+## Releasing
+
+`deno task package --tag <tag> --repo <owner/name>` writes
+`dist/packages/*.orax` **and `dist/manifest.toml`**, the release form of the
+manifest — `orax.toml` plus the download `url` and `sha256` — which is what gets
+copied into the marketplace index. Both are uploaded by
+`.github/workflows/release.yml`. Publishing only the `.orax` leaves the
+marketplace with nothing to point at.
+
+`scripts/package.ts` and the release workflow are shared verbatim with the
+sibling plugins and name nothing about Codex; `bundle.config.ts` is the only
+plugin-specific half. It declares `cli: "user_installed"`, which is why this
+plugin's manifest carries a single `url`/`sha256` pair rather than a
+`[[targets]]` table: `codex-acp` is the user's own npm install, resolved off
+`PATH` by `services/command.ts`, so there is no upstream asset to bundle and no
+target triple a package could be wrong for. A universal package deliberately
+declares no `[artifact]` section — it carries no binary whose host compatibility
+could be checked.
+
+Bump `orax.toml` `version` before tagging: `install_local` refuses a version
+that is already installed and never retires older ones, so reusing a number
+silently leaves the old code running.
