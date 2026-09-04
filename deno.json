@@ -1,6 +1,6 @@
 {
   "name": "@ora-space/codex-agent",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "exports": "./src/main.ts",
   "minimumDependencyAge": 0,
   "imports": {
@@ -26,7 +26,11 @@
   },
   "compilerOptions": {
     "strict": true,
-    "lib": ["deno.ns", "dom", "esnext"]
+    "lib": [
+      "deno.ns",
+      "dom",
+      "esnext"
+    ]
   },
   "fmt": {
     "lineWidth": 80,
@@ -35,7 +39,9 @@
   },
   "lint": {
     "rules": {
-      "tags": ["recommended"]
+      "tags": [
+        "recommended"
+      ]
     }
   }
 }
