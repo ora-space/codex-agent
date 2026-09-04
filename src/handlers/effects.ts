@@ -1,46 +1,68 @@
 import type {
-  AgentEffectContext,
+  AgentEffectCoordinationContext,
   AgentEffectDefinition,
-  AgentEffectIdleState,
-  AgentEffectRestartContext,
-  EffectSurfaceDeclaration,
+  AgentEffectReadinessContext,
+  EffectResourceDeclaration,
   JsonValue,
 } from "@ora-space/plugin-sdk";
+import { PluginMethodError, SKILL_DIRECTORY_V1 } from "@ora-space/plugin-sdk";
 import type { CodexClient } from "../services/codex-client.ts";
+import { invalidateCodexModels } from "./models.ts";
 
 /**
- * The Skill surface Codex reads: a project-relative `.codex/skills/<name>/SKILL.md` tree.
+ * The Skill surface Codex reads: a project-relative `.agents/skills/<name>/SKILL.md` tree.
  *
- * Codex resolves skills by precedence — a project-local directory, the repository's `.codex/skills`
- * at its root, the user's `~/.codex/skills`, then a system directory — and merges what it finds.
- * Ora only manages the repository-root surface it declares here, so it never fights another tool
- * over the user- or system-level directories.
+ * Codex resolves skills by precedence — every `.agents/skills` directory from the working
+ * directory up to the repository root, the user's `~/.agents/skills`, then a system directory
+ * (`/etc/codex/skills`) — and merges what it finds. Ora only manages the repository-root surface
+ * it declares here, so it never fights another tool over the user- or system-level directories.
  */
-export const SKILLS_SURFACE: EffectSurfaceDeclaration = {
-  workspaceRelativePath: ".codex/skills",
-  materializationFormat: "skill_directory.v1",
-  coordination: "wait_for_idle_and_restart",
+export const SKILLS_RESOURCE: EffectResourceDeclaration = {
+  workspaceRelativePath: ".agents/skills",
+  materializationFormat: SKILL_DIRECTORY_V1,
+  coordination: "quiesce_before_mutation",
 };
 
 const SESSION_PROMPT_METHOD = "session/prompt";
 
+/** The code this plugin reports a Consumer call it cannot satisfy right now under. */
+const CONSUMER_NOT_READY = -32000;
+
 /**
- * Coordinates the `.codex/skills` Effect surface against the one adapter process this plugin owns.
+ * How long `effect/coordinate` waits for in-flight turns before reporting the Target still busy.
  *
- * Codex resolves its Skill directories when a session starts, so a Skill edit on disk only reaches
- * a session created after the edit. This tracks in-flight `session/prompt` turns from the ACP
- * frames already flowing through the bridge — nothing here parses ACP beyond `method` and `id` —
- * and, once every turn has finished, holds any new one behind a barrier until `restart` has
- * respawned the adapter and replayed what it held, so the very next turn is guaranteed to land in
- * a session created after the write.
+ * Ora allows a plugin control call 30 seconds and coordination holds that call open, so this has
+ * to finish well inside it. Waiting at all is worth it because the common case is a turn seconds
+ * from finishing; past that the honest answer is to fail this attempt and let Ora's reconcile
+ * schedule bring the mutation back, rather than hold a host call for the length of a prompt that
+ * may legitimately run for minutes.
+ */
+const QUIESCE_TIMEOUT_MS = 10_000;
+
+/** How often the drain loop rechecks whether every in-flight turn has answered. */
+const QUIESCE_POLL_MS = 50;
+
+/**
+ * Coordinates the `.agents/skills` Effect Resource against the one adapter process this plugin owns.
+ *
+ * A Skill edit on disk reaches Codex only once Codex reads the directory again, and when that
+ * happens is Codex's business — at startup for an agent that scans once, at `session/new` for one
+ * that resolves per session. Respawning covers both, so this coordinates a restart rather than
+ * trying to model which of the two Codex does: the process serving the next turn is always one
+ * that started after the write.
+ *
+ * In-flight `session/prompt` turns are tracked from the ACP frames already flowing through the
+ * bridge — nothing here parses ACP beyond `method` and `id` — and Ora's three Consumer calls are
+ * answered around that: `coordinate` holds new turns behind a barrier and waits for the running
+ * ones, `reactivate` respawns the adapter and replays what was held, and `verifyReady` reports
+ * whether the process Ora is about to mark ready is one that has actually read the Skills on disk.
  */
 export class SkillEffectCoordinator {
   readonly #client: CodexClient;
   readonly #cwd: () => string | undefined;
   readonly #openTurns = new Set<string | number>();
-  /** `undefined` while no barrier is held; an array from the moment `waitForIdle` reports ready. */
+  /** `undefined` while no barrier is held; an array from the moment `coordinate` engages one. */
   #held: JsonValue[] | undefined;
-  #appliedGeneration: number | undefined;
 
   constructor(client: CodexClient, cwd: () => string | undefined) {
     this.#client = client;
@@ -48,9 +70,10 @@ export class SkillEffectCoordinator {
   }
 
   readonly definition: AgentEffectDefinition = {
-    surfaces: [SKILLS_SURFACE],
-    waitForIdle: (context) => this.#waitForIdle(context),
-    restart: (context) => this.#restart(context),
+    resources: [SKILLS_RESOURCE],
+    coordinate: (context) => this.#coordinate(context),
+    reactivate: (context) => this.#reactivate(context),
+    verifyReady: (context) => this.#verifyReady(context),
   };
 
   /**
@@ -95,37 +118,99 @@ export class SkillEffectCoordinator {
   }
 
   /**
-   * Reports whether every turn has finished, engaging the new-turn barrier the moment it has.
+   * Engages the new-turn barrier, then reports safe to mutate once every running turn has
+   * answered.
    *
-   * Idempotent by design: once the barrier is engaged, `#openTurns` stays empty forever because
-   * `intercept` routes every later `session/prompt` into `#held` instead, so a repeated call keeps
-   * returning `ready` with no further side effect.
+   * The barrier goes up before the wait, not after it. A check that only latched on an observed
+   * idle moment would never find one in a workspace whose prompts keep arriving; holding first
+   * makes the set of turns to wait for finite, so the wait always terminates.
+   *
+   * Idempotent, as Ora requires of both coordination calls: a repeat finds the barrier already up
+   * and the turn set already drained, and returns without touching anything.
    */
-  #waitForIdle(_context: AgentEffectContext): AgentEffectIdleState {
-    if (this.#openTurns.size > 0) {
-      return "waiting_for_idle";
-    }
+  async #coordinate(
+    context: AgentEffectCoordinationContext,
+  ): Promise<JsonValue> {
     this.#held ??= [];
-    return "ready";
+    const deadline = Date.now() + QUIESCE_TIMEOUT_MS;
+    while (this.#openTurns.size > 0) {
+      if (Date.now() >= deadline) {
+        // Ora only reactivates Targets whose coordination succeeded, so a barrier abandoned here
+        // would hold its queued prompts for the life of the process. Release before failing, and
+        // let the next reconcile attempt engage a fresh one.
+        const stranded = this.#openTurns.size;
+        await this.#release();
+        throw new PluginMethodError(
+          CONSUMER_NOT_READY,
+          `Codex still has ${stranded} turn(s) in flight`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, QUIESCE_POLL_MS));
+    }
+    return { targetId: context.targetId, state: "safe_to_mutate" };
   }
 
   /**
-   * Restarts the adapter so the next session it creates resolves `.codex/skills` fresh, then
+   * Restarts the adapter so the next session it creates resolves `.agents/skills` fresh, then
    * replays every held turn in order.
    *
-   * The barrier is released only after the queue is fully drained, and draining re-checks the
-   * queue length on every iteration, so a `session/prompt` that arrives mid-restart is still
-   * caught by `intercept` and gets appended in time to be replayed rather than dropped.
+   * The barrier is the idempotence marker: a repeat call finds none held — exactly the state a
+   * finished reactivation leaves behind — and does not restart an adapter that has already
+   * rescanned, which would tear down the sessions that came back after the first restart.
    */
-  async #restart(context: AgentEffectRestartContext): Promise<void> {
+  async #reactivate(
+    context: AgentEffectCoordinationContext,
+  ): Promise<JsonValue> {
+    if (this.#held === undefined) {
+      return { targetId: context.targetId, state: "reactivated" };
+    }
     const cwd = this.#cwd();
-    const alreadyRunning = this.#client.running &&
-      this.#appliedGeneration === context.generation;
-    if (!alreadyRunning && cwd !== undefined) {
+    if (cwd !== undefined) {
+      invalidateCodexModels(cwd);
       await this.#client.start(cwd);
     }
-    this.#appliedGeneration = context.generation;
+    await this.#release();
+    return { targetId: context.targetId, state: "reactivated" };
+  }
 
+  /**
+   * Reports whether the running adapter can consume this exact Target projection.
+   *
+   * The proof this plugin can offer is that a process is up and no mutation is mid-flight: every
+   * Skill write is followed by a restart, so an adapter running outside a coordination episode is
+   * one that started after the last write and has read what is on disk. Anything else throws,
+   * which is how a Consumer says "not ready" — Ora records readiness only from a call that
+   * returned.
+   */
+  #verifyReady(context: AgentEffectReadinessContext): JsonValue {
+    if (!this.#client.running) {
+      throw new PluginMethodError(
+        CONSUMER_NOT_READY,
+        "the Codex adapter is not running, so it has read no Skills",
+      );
+    }
+    if (this.#held !== undefined) {
+      throw new PluginMethodError(
+        CONSUMER_NOT_READY,
+        "Codex is quiesced for a Skill mutation and has not rescanned yet",
+      );
+    }
+    return {
+      targetId: context.targetId,
+      generation: context.generation,
+      consumerRevisionId: context.consumerRevisionId,
+      projectionDigest: context.projectionDigest,
+    };
+  }
+
+  /**
+   * Drains every held turn into the adapter, then lets new ones through again.
+   *
+   * The queue length is rechecked on every iteration rather than snapshotted, so a
+   * `session/prompt` that `intercept` absorbs while the drain is still running is replayed in this
+   * pass instead of being stranded behind a barrier that is about to come down.
+   */
+  async #release(): Promise<void> {
     while (this.#held !== undefined && this.#held.length > 0) {
       const frame = this.#held.shift();
       if (frame !== undefined) {

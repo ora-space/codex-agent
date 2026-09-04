@@ -63,7 +63,7 @@ same way inside an Ora session.
 ## Project skills
 
 Codex looks for reusable [Skills](https://agentclientprotocol.com) in a
-`.codex/skills/<name>/SKILL.md` folder at the root of your project, alongside
+`.agents/skills/<name>/SKILL.md` folder at the root of your project, alongside
 any skills installed globally on your machine. Add or edit files there and Ora
 takes care of getting Codex to pick them up — no manual restart needed.
 
