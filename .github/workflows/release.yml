@@ -1,14 +1,17 @@
 name: Release
 
-# Deliberately generic: every fact about which CLI is bundled and which upstream asset serves
-# each target lives in `bundle.config.ts`, and the packaging itself in `scripts/package.ts`. This
-# file should be copyable to another agent plugin unchanged.
-
+# Maintainer tags and the scheduled upstream watcher use this same release path.
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      tag:
+        description: The existing tag to build and publish.
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -16,31 +19,75 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Check the tag matches every manifest
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 '^version *=' orax.toml | sed -E 's/^version *= *"(.*)"/\1/')
+          DENO_VERSION=$(jq -r '.version' deno.json)
+          PACKAGE_VERSION=$(jq -r '.version' package.json)
+          if [ "$TAG" != "v${VERSION}" ]; then
+            echo "::error::tag ${TAG} does not match orax.toml version ${VERSION}"
+            exit 1
+          fi
+          if [ "$DENO_VERSION" != "$VERSION" ] || [ "$PACKAGE_VERSION" != "$VERSION" ]; then
+            echo "::error::manifest versions disagree: orax=${VERSION}, deno=${DENO_VERSION}, package=${PACKAGE_VERSION}"
+            exit 1
+          fi
+
       - name: Build
         run: deno task build
 
-      # Writes dist/packages/*.orax (one per declared target) and dist/manifest.toml.
       - name: Package
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: deno task package --tag "${{ github.ref_name }}" --repo "${{ github.repository }}"
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: deno task package --tag "$TAG" --repo "${{ github.repository }}"
 
-      - name: Create Release
-        if: github.ref_type == 'tag'
+      - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/packages/*.orax dist/manifest.toml \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          ADAPTER=$(jq -r '.adapter.version' upstream.lock.json)
+          CODEX=$(jq -r '.codex.version' upstream.lock.json)
+          {
+            printf 'Bundles `codex-acp` %s with Codex CLI %s.\n\n' "$ADAPTER" "$CODEX"
+            printf 'Each target-specific `.orax` carries both binaries and their native helper resources.\n'
+          } > notes.md
+          gh release create "$TAG" dist/packages/*.orax dist/manifest.toml \
+            --title "$TAG" --notes-file notes.md --generate-notes
+
+      - name: Show the marketplace entry
+        run: |
+          set -euo pipefail
+          ID=$(grep -m1 '^identifier *=' orax.toml | sed -E 's/^identifier *= *"(.*)"/\1/')
+          {
+            echo "## Marketplace entry"
+            echo
+            echo "Copy into \`registry/${ID:0:1}/${ID}/orax.toml\`:"
+            echo
+            echo '```toml'
+            cat dist/manifest.toml
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

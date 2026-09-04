@@ -7,18 +7,9 @@ your own Codex CLI with your own OpenAI account.
 
 ## Requirements
 
-- **The [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp)**,
-  published as
-  [`@agentclientprotocol/codex-acp`](https://www.npmjs.com/package/@agentclientprotocol/codex-acp),
-  which this plugin drives on your behalf:
-  ```
-  npm i -g @agentclientprotocol/codex-acp
-  ```
-- Verify that the adapter command is available in the same environment that
-  launches Ora:
-  ```
-  codex-acp --version
-  ```
+- The plugin package includes a target-specific standalone build of the
+  [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp). No
+  global `codex-acp` installation is required.
 - **A working Codex CLI**, signed in with either a ChatGPT subscription or an
   API key. The adapter bundles a compatible `codex` binary, so a separate
   install is only needed if you want to pin a specific version.
@@ -51,10 +42,14 @@ _inside_ a Codex session (Ora surfaces them as session options), rather than
 from a separate picker — Codex exposes its live model list this way instead of a
 fixed one, so you always see exactly what your account can access.
 
-The plugin's pre-session `agent/listModels` response is intentionally empty. The
-actual model list is returned by ACP `session/new` in `configOptions`, after Ora
-has initialized the adapter and warmed a session. An empty `agent/listModels`
-response therefore does not mean that Codex has no models.
+The plugin's pre-session `agent/listModels` response is discovered from a
+short-lived ACP probe. It starts the adapter in the requested workspace,
+performs `initialize` and `session/new`, and extracts the `category: "model"`
+selector that `codex-acp` returns in `configOptions`. The live session receives
+the same options, so the pre-session picker and in-session picker use one source
+of truth. If the adapter is unavailable or authentication prevents discovery,
+the request fails with that diagnostic rather than pretending that no models
+exist.
 
 Slash commands you'd use in the Codex CLI directly — `/review`,
 `/review-branch`, `/compact`, `/status`, `/mcp`, `/skills`, and so on — work the
@@ -69,40 +64,24 @@ takes care of getting Codex to pick them up — no manual restart needed.
 
 ## Troubleshooting
 
-- **Ora stays on "Loading…"** — first verify that `codex-acp --version` works
-  from the environment used to launch Ora. The plugin resolves `codex-acp.cmd`
-  on Windows and `codex-acp` elsewhere. If the npm package is installed but the
-  command is missing, reinstall it so npm recreates its executable shim:
-  ```
-  npm uninstall -g @agentclientprotocol/codex-acp
-  npm install -g @agentclientprotocol/codex-acp
-  codex-acp --version
-  ```
-  Then restart Ora, or disable and re-enable the Codex plugin, so its runtime
-  supervisor retries the adapter with the updated `PATH`.
-- **"Codex's ACP adapter is not installed or not on PATH"** — install the
-  official
-  [`@agentclientprotocol/codex-acp`](https://www.npmjs.com/package/@agentclientprotocol/codex-acp)
-  package with `npm i -g @agentclientprotocol/codex-acp`. If you keep it
-  somewhere non-standard, set `ORA_CODEX_ACP_BIN` to the full path of an
-  executable adapter command and restart Ora. On Windows, prefer the generated
-  `codex-acp.cmd` shim rather than pointing directly at the JavaScript file.
-- **`agent/listModels` returns `[]`** — this is expected for Codex. Models are
-  supplied by ACP `session/new` as session configuration options, not by the
-  plugin's pre-session model endpoint. Check the session picker after the ACP
-  handshake completes.
+- **Ora stays on "Loading…"** — reinstall the plugin package so Ora extracts the
+  binary for the current target. A package built for another target is rejected
+  by the manifest's `[artifact]` declaration.
+- **`agent/listModels` fails or returns `[]`** — model discovery asks the
+  adapter for the same `session/new` configuration options used by a live
+  session. Check that the adapter starts in the requested workspace and that
+  Codex is authenticated; an adapter that genuinely exposes no model selector
+  returns an empty list.
 - **Codex keeps asking you to sign in** — check that `codex` itself is
   authenticated (`codex login` from a terminal), or set `CODEX_API_KEY` /
   `OPENAI_API_KEY`.
-- **The command works in a terminal but not in Ora** — Ora must inherit the
-  directory containing `codex-acp.cmd` / `codex-acp` in its `PATH`. Launch Ora
-  from an environment with the correct `PATH`, or configure `ORA_CODEX_ACP_BIN`
-  before starting Ora. An already-running Ora process does not automatically
-  inherit changes made to the shell environment.
+- **A bundled binary fails to start** — check the plugin/runtime log for the
+  target triple and the adapter startup error, then reinstall the plugin to
+  replace an incomplete extraction.
 - **Useful log messages** — search Ora's plugin/runtime log for:
   `agent startup failed`, `agent_initialize_timeout`,
-  `agent runtime is unavailable`, or
-  `Codex's ACP adapter is not installed or not on PATH`.
+  `agent runtime is unavailable`, or `the bundled agent cannot run` or
+  `agent startup failed`.
 - **A session seems stuck** — stopping and restarting the Codex agent from Ora
   relaunches the adapter cleanly.
 
@@ -110,7 +89,7 @@ takes care of getting Codex to pick them up — no manual restart needed.
 
 ```
 deno task build
-deno task package --tag v0.2.0 --repo ora-space/codex-agent
+deno task package --tag v0.3.0 --repo ora-space/codex-agent
 ```
 
 This writes `dist/packages/ora-space.codex-<tag>.orax` and `dist/manifest.toml`
@@ -120,23 +99,28 @@ copied into the marketplace as-is; it can only be written once the package
 exists, so it is generated at package time rather than committed. The release
 workflow uploads both to the GitHub release.
 
-`bundle.config.ts` decides which of the two release shapes is built, and it is
-the only file to change to switch:
+`bundle.config.ts` declares the target-specific release shape:
 
-| `cli`              | Produces                               | Manifest carries             | At runtime                                 |
-| ------------------ | -------------------------------------- | ---------------------------- | ------------------------------------------ |
-| `"user_installed"` | one `.orax` every host can install     | one `url` / `sha256` pair    | runs the `codex-acp` on the user's `PATH`  |
-| `"bundled"`        | one `.orax` per declared target triple | one `[[targets]]` per triple | runs an adapter shipped inside the package |
+| `cli`       | Produces                               | Manifest carries             | At runtime                                 |
+| ----------- | -------------------------------------- | ---------------------------- | ------------------------------------------ |
+| `"bundled"` | one `.orax` per declared target triple | one `[[targets]]` per triple | runs an adapter shipped inside the package |
 
-This plugin ships `"user_installed"`: `codex-acp` is published on npm and
-installed by the user, so there is no upstream release asset to bundle. Ora's
-marketplace release carries either one universal artifact or per-target
-artifacts, never both, which is why this is one choice per release rather than a
-mix.
+This plugin ships `"bundled"`: the packaging script installs the pinned
+`@agentclientprotocol/codex-acp` npm package and compiles its official
+entrypoint for each supported target. `upstream.lock.json` pins that adapter,
+the compatible `@openai/codex` version, and every native platform tarball with
+its npm integrity hash. Ora's marketplace release carries per-target artifacts,
+so the installed package always contains both `codex-acp` and the native Codex
+CLI selected for its host.
+
+`deno task sync --check` compares the committed lock with the latest resolved
+upstream chain. The nightly `.github/workflows/upstream.yml` updates the lock,
+bumps this plugin's patch version, pushes a tag, and calls the same reusable
+release workflow used by maintainer tags.
 
 `deno task check` type checks, `deno task lint` lints, and `deno task test` runs
 the unit tests; `deno task simulate` drives the plugin the way Ora's host does
-and needs a real `codex-acp` on `PATH`.
+and compiles the adapter into the package.
 
 ## License
 

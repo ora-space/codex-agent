@@ -1,44 +1,13 @@
 import {
-  AGENT_NOT_INSTALLED,
   type AgentInvocation,
   type HostChildProcess,
   type HostProcesses,
-  HostRequestError,
-  PluginMethodError,
   spawnAgentProcess,
 } from "@ora-space/plugin-sdk";
-
-/** The npm bin name of the ACP adapter that fronts Codex. */
-const BINARY_NAME = "codex-acp";
-
-/** Pins one exact executable, bypassing PATH resolution entirely. */
-export const BIN_ENV_VAR = "ORA_CODEX_ACP_BIN";
+import { bundledAdapterPath } from "./bundled-binary.ts";
 
 /**
- * Names the PATH spellings that can launch Codex's ACP adapter, in the order they should be
- * tried.
- *
- * Windows gets four: Windows installers disagree about what they put on PATH, and the host's PATH
- * lookup only appends `.exe` to a bare name — it does not try the others — so every spelling a
- * real installer produces has to be named here or the adapter is reported missing on a machine
- * that has it. `codex-acp` is an npm-published binary, so a `.cmd`/`.bat` shim is the common case
- * rather than the exception. The order follows Windows' own `PATHEXT` precedence: `.exe` first,
- * so the process the host ends up holding is the adapter itself rather than a shell wrapper
- * around it.
- */
-export function resolveCodexCommands(): string[] {
-  return Deno.build.os === "windows"
-    ? [
-      `${BINARY_NAME}.exe`,
-      `${BINARY_NAME}.cmd`,
-      `${BINARY_NAME}.bat`,
-      BINARY_NAME,
-    ]
-    : [BINARY_NAME];
-}
-
-/**
- * Spawns Codex's ACP adapter through the host, whichever spelling this machine answers to.
+ * Starts the target-specific `codex-acp` executable carried by this plugin package.
  *
  * The host owns the OS process rather than this sandboxed runtime: it terminates process trees
  * and reclaims every child this plugin generation left behind, which a plugin spawning its own
@@ -46,85 +15,16 @@ export function resolveCodexCommands(): string[] {
  * handle a plugin holds is the shim and the real adapter underneath it can outlive a kill of the
  * wrapper.
  *
- * No `packageCommand` is named because this package ships no adapter of its own — `codex-acp` is
- * always the user's own npm install.
- *
- * `ORA_CODEX_ACP_BIN` outranks the PATH lookup, and is returned alone: a pin that quietly fell
- * back to whatever is on PATH would run a different adapter than the user asked for.
+ * There is intentionally no PATH fallback: an installed package must run the exact adapter it was
+ * built and tested with.
  */
 export function spawnCodex(
   processes: HostProcesses,
   invocation: AgentInvocation,
 ): Promise<HostChildProcess> {
-  const pinned = readEnv(BIN_ENV_VAR)?.trim();
-  if (pinned !== undefined && pinned !== "") {
-    return spawnPinned(processes, pinned, invocation);
-  }
-  return spawnResolved(processes, invocation);
-}
-
-/**
- * Resolves the adapter off PATH, replacing the SDK's generic "not found" message with one that
- * names the npm package a user can install and the env var that bypasses PATH entirely.
- */
-async function spawnResolved(
-  processes: HostProcesses,
-  invocation: AgentInvocation,
-): Promise<HostChildProcess> {
-  const candidates = resolveCodexCommands();
-  try {
-    return await spawnAgentProcess(
-      processes,
-      { command: candidates },
-      invocation,
-    );
-  } catch (error) {
-    if (
-      error instanceof PluginMethodError && error.code === AGENT_NOT_INSTALLED
-    ) {
-      throw new PluginMethodError(
-        AGENT_NOT_INSTALLED,
-        `Codex's ACP adapter is not installed or not on PATH (tried: ${
-          candidates.join(", ")
-        }); install it with \`npm i -g @agentclientprotocol/codex-acp\` or set ${BIN_ENV_VAR}`,
-      );
-    }
-    throw error;
-  }
-}
-
-/**
- * Spawns the adapter a user named explicitly, reporting an absent one as local configuration.
- *
- * A pin pointing at nothing is the same kind of fault as an uninstalled adapter — fixable without
- * restarting Ora — so it stays retryable rather than failing this agent outright.
- */
-async function spawnPinned(
-  processes: HostProcesses,
-  command: string,
-  invocation: AgentInvocation,
-): Promise<HostChildProcess> {
-  try {
-    return await processes.spawn({ command, ...invocation });
-  } catch (error) {
-    if (
-      error instanceof HostRequestError && error.kind === "program_not_found"
-    ) {
-      throw new PluginMethodError(
-        AGENT_NOT_INSTALLED,
-        `${BIN_ENV_VAR} points at ${command}, which does not exist`,
-      );
-    }
-    throw error;
-  }
-}
-
-/** Reads an env var, treating a missing read permission as an unset value. */
-function readEnv(name: string): string | undefined {
-  try {
-    return Deno.env.get(name);
-  } catch {
-    // The host may not grant --allow-env; absence is indistinguishable from "not set".
-    return undefined;
-  }
+  return spawnAgentProcess(
+    processes,
+    { packageCommand: bundledAdapterPath(), command: "codex-acp" },
+    invocation,
+  );
 }

@@ -1,22 +1,22 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import type {
   HostChildProcess,
   HostChildProcessOptions,
   HostProcesses,
   JsonValue,
 } from "@ora-space/plugin-sdk";
-import {
-  AGENT_NOT_INSTALLED,
-  HostRequestError,
-  SKILL_DIRECTORY_V1,
-} from "@ora-space/plugin-sdk";
+import { SKILL_DIRECTORY_V1 } from "@ora-space/plugin-sdk";
 import { forwardAcpFrame } from "../src/handlers/acp.ts";
 import {
   SkillEffectCoordinator,
   SKILLS_RESOURCE,
 } from "../src/handlers/effects.ts";
 import { listCodexModels } from "../src/handlers/models.ts";
-import { BIN_ENV_VAR, resolveCodexCommands } from "../src/services/command.ts";
+import {
+  bundledAdapterPath,
+  bundledCodexPath,
+} from "../src/services/bundled-binary.ts";
+import { spawnCodex } from "../src/services/command.ts";
 import {
   CodexClient,
   type SpawnedProcess,
@@ -30,48 +30,26 @@ Deno.test("ora-space.codex declares an agent kind", async () => {
   assertEquals(manifest.includes('kind = "agent"'), true);
 });
 
-Deno.test("every Windows spelling an installer writes is named", () => {
+Deno.test("the bundled adapter path has the target executable suffix", () => {
   assertEquals(
-    resolveCodexCommands(),
+    bundledAdapterPath(),
     Deno.build.os === "windows"
-      ? ["codex-acp.exe", "codex-acp.cmd", "codex-acp.bat", "codex-acp"]
-      : ["codex-acp"],
+      ? "assets/bin/codex-acp.exe"
+      : "assets/bin/codex-acp",
   );
-});
-
-Deno.test("a pinned binary is the only program spawned", async () => {
-  const spawns: HostChildProcessOptions[] = [];
-  await withPinnedBinary("C:\\tools\\codex-acp.exe", async () => {
-    await listCodexModels(
-      fakeProcesses(defaultAcpAgent, spawns),
-      uniqueWorkspace(),
-    );
-  });
-  assertEquals(spawns.map((options) => options.command), [
-    "C:\\tools\\codex-acp.exe",
-  ]);
-  // A pin names one exact executable, so nothing about the package is asked of the host either.
   assertEquals(
-    spawns.every((options) => options.packageCommand === undefined),
-    true,
+    bundledCodexPath(),
+    Deno.build.os === "windows" ? "assets/bin/codex.exe" : "assets/bin/codex",
   );
 });
 
-Deno.test("a pin that names nothing is reported as a missing adapter", async () => {
-  const missing: HostProcesses = {
-    spawn: () =>
-      Promise.reject(
-        new HostRequestError("program_not_found", "no such program"),
-      ),
-  };
-  await withPinnedBinary("C:\\tools\\absent.exe", async () => {
-    const error = await assertRejects(() =>
-      listCodexModels(missing, uniqueWorkspace())
-    );
-    // Ora retries this code quietly as expected local configuration rather than faulting the
-    // agent, which is the whole difference between "not installed" and "broken".
-    assertEquals((error as { code?: number }).code, AGENT_NOT_INSTALLED);
+Deno.test("the package binary is the only program spawned", async () => {
+  const spawns: HostChildProcessOptions[] = [];
+  await spawnCodex(fakeProcesses(defaultAcpAgent, spawns), {
+    cwd: uniqueWorkspace(),
   });
+  assertEquals(spawns[0].packageCommand, bundledAdapterPath());
+  assertEquals(spawns[0].command, undefined);
 });
 
 // `defaultAcpAgent` reports both `reasoning-effort` and `model` config options, so this also
@@ -293,21 +271,6 @@ let workspaceCounter = 0;
 function uniqueWorkspace(): string {
   workspaceCounter += 1;
   return `/workspace/${workspaceCounter}`;
-}
-
-/** Runs `body` with the adapter pin set, restoring whatever the environment had before. */
-async function withPinnedBinary(
-  value: string,
-  body: () => Promise<void>,
-): Promise<void> {
-  const previous = Deno.env.get(BIN_ENV_VAR);
-  Deno.env.set(BIN_ENV_VAR, value);
-  try {
-    await body();
-  } finally {
-    if (previous === undefined) Deno.env.delete(BIN_ENV_VAR);
-    else Deno.env.set(BIN_ENV_VAR, previous);
-  }
 }
 
 /** Answers one ACP request the way `codex-acp` with a model selector would. */

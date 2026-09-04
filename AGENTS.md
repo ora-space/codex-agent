@@ -94,51 +94,19 @@ plugin's point of view, and declaring either would be a mistake — Ora fully ow
 what it materializes into a declared Resource, so it would reconcile away Skills
 another tool put there.
 
-## Resolving the adapter on Windows — always include `.bat`
+## Bundled adapter binary
 
-**Every list of PATH spellings for the adapter must name `.exe`, `.cmd`, `.bat`,
-and the bare name.** This has broken real installs more than once, always the
-same way, and it is the single most important rule in this file after the one
-above.
+The plugin follows the Claude plugin's side-by-side layout. Each target package
+contains the official `@agentclientprotocol/codex-acp` entrypoint at
+`assets/bin/codex-acp` (or `codex-acp.exe` on Windows) and the native Codex CLI
+at `assets/bin/codex` (or `codex.exe` on Windows). The adapter sets `CODEX_PATH`
+to that neighboring native executable. The helper directories `codex-path/` and
+`codex-resources/` remain under the same `bin` directory.
 
-```ts
-return Deno.build.os === "windows"
-  ? [
-    `${BINARY_NAME}.exe`,
-    `${BINARY_NAME}.cmd`,
-    `${BINARY_NAME}.bat`,
-    BINARY_NAME,
-  ]
-  : [BINARY_NAME];
-```
-
-Why each part matters:
-
-- **The host's PATH lookup only appends `.exe` to a bare name.** It does not try
-  `.cmd` or `.bat`. So naming just `codex-acp` finds nothing on a machine where
-  the adapter is installed as a shim — which is what `npm i -g` actually writes
-  on Windows.
-- **Omitting a spelling is indistinguishable from "not installed".** The ladder
-  inside `spawnAgentProcess` only advances on `program_not_found`, so a missing
-  spelling exhausts the list and raises `AGENT_NOT_INSTALLED` (`-32001`).
-- **That failure surfaces as something unrelated.** Ora deliberately suppresses
-  the log for `AgentNotInstalled` (`connection.rs`, "would flood the runtime
-  log"), then tears the plugin process down — so the only thing the user sees is
-  `plugin stdout closed` from the plugin runtime's stdout reader. Nothing in
-  that message mentions PATH, the adapter, or the spelling that was missed. **Do
-  not spend time debugging the plugin when you see `plugin stdout closed`; check
-  the candidate list first.**
-- **The order here is Windows' own `PATHEXT` precedence.** `.exe` first means
-  the process the host holds is the adapter itself rather than a `cmd.exe`
-  wrapper around it, which matters when the host kills it.
-
-Adding a spelling is free: only "this one is not on PATH" advances to the next
-candidate, and a candidate that resolved and then failed is raised as-is rather
-than being buried under the next attempt.
-
-`ORA_CODEX_ACP_BIN` outranks the whole ladder and is used alone, never with a
-fallback: silently running a different adapter than the one a developer named is
-worse than failing.
+The paths are defined once in `src/services/bundled-binary.ts`; the packager and
+`services/command.ts` use those definitions rather than deriving paths
+independently. The package is target-specific and declares `[artifact]`, so Ora
+rejects a package built for a different platform.
 
 ## Process ownership
 
@@ -222,8 +190,8 @@ Ora parses and validates that table today but does not yet enforce it.
   API have changed shape across versions before.
 - `deno task test` needs no CLI: discovery is exercised against a fake
   `HostProcesses` that scripts an ACP peer, and effect coordination against a
-  `CodexClient` with a scripted `spawn`. `deno task simulate` needs a real
-  `codex-acp` on PATH (`npm i -g @agentclientprotocol/codex-acp`).
+  `CodexClient` with a scripted `spawn`. `deno task simulate` needs a built
+  package binary, or a locally provided adapter for the simulator.
 - One test reads `src/main.ts` as text to assert the effect wiring is present.
   That is deliberate: the entrypoint calls `runAgentPlugin` at module scope, so
   importing it would start serving the host, and the wiring it guards is exactly
@@ -241,15 +209,17 @@ copied into the marketplace index. Both are uploaded by
 `.github/workflows/release.yml`. Publishing only the `.orax` leaves the
 marketplace with nothing to point at.
 
-`scripts/package.ts` and the release workflow are shared verbatim with the
-sibling plugins and name nothing about Codex; `bundle.config.ts` is the only
-plugin-specific half. It declares `cli: "user_installed"`, which is why this
-plugin's manifest carries a single `url`/`sha256` pair rather than a
-`[[targets]]` table: `codex-acp` is the user's own npm install, resolved off
-`PATH` by `services/command.ts`, so there is no upstream asset to bundle and no
-target triple a package could be wrong for. A universal package deliberately
-declares no `[artifact]` section — it carries no binary whose host compatibility
-could be checked.
+`bundle.config.ts` declares `cli: "bundled"` and the target-specific Bun and
+native-runtime targets. `upstream.lock.json` pins the exact adapter, compatible
+Codex package, and each platform tarball. `scripts/package.ts` compiles that
+adapter, verifies the target tarball's npm integrity, and emits one `.orax` plus
+one `[[targets]]` record per target.
+
+`deno task sync --check` exits 20 when the committed lock is behind. The nightly
+`upstream.yml` treats only that code as an update, commits the refreshed lock
+with synchronized `orax.toml`, `deno.json`, and `package.json` patch versions,
+tags it, then calls the reusable `release.yml`. Packaging must never resolve
+`latest` itself; rebuilding an existing tag must use only its committed lock.
 
 Bump `orax.toml` `version` before tagging: `install_local` refuses a version
 that is already installed and never retires older ones, so reusing a number

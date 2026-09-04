@@ -100,10 +100,9 @@ async function discoverModels(
   processes: HostProcesses,
   cwd: string,
 ): Promise<AgentModel[]> {
-  // Resolution failures — the adapter not on PATH, a pin naming nothing — are raised here as the
-  // classified errors Ora acts on, before any probe exists to blur them into a timeout. The
-  // directory is the child's own cwd, exactly as the live bridge spawns it, so discovery cannot
-  // resolve a different project than a session would.
+  // Start failures are raised before any probe exists to blur them into a timeout. The directory is
+  // the child's own cwd, exactly as the live bridge spawns it, so discovery cannot resolve a
+  // different project than a session would.
   const child = await spawnCodex(processes, { cwd });
   const probe = AcpProbe.attach(child);
   try {
