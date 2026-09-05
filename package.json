@@ -1,6 +1,6 @@
 {
   "name": "@ora-space/codex-agent",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Ora agent plugin that runs Codex as an ACP agent.",
   "type": "module",
   "license": "Apache-2.0",
