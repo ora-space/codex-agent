@@ -42,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           MISSING=
-          [ -n "${APP_ID:-}" ] || MISSING="${MISSING} vars.APP_ID"
+          [ -n "${MARKETPLACE_SYNC_APP_ID:-}" ] || MISSING="${MISSING} vars.MARKETPLACE_SYNC_APP_ID"
           [ -n "${MARKETPLACE_SYNC_APP_PRIVATE_KEY:-}" ] || MISSING="${MISSING} secrets.MARKETPLACE_SYNC_APP_PRIVATE_KEY"
           if [ -z "$MISSING" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -56,7 +56,7 @@ jobs:
             echo "\`${MISSING# }\` is not available to \`${GITHUB_REPOSITORY}\`."
             echo
             echo "Ask an \`ora-space\` owner to add this repository to the visibility list of the"
-            echo "organization's \`APP_ID\` variable and \`MARKETPLACE_SYNC_APP_PRIVATE_KEY\` secret. Everything"
+            echo "organization's \`MARKETPLACE_SYNC_APP_ID\` variable and \`MARKETPLACE_SYNC_APP_PRIVATE_KEY\` secret. Everything"
             echo "below ran; only the marketplace pull request was skipped."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -116,7 +116,7 @@ jobs:
         if: steps.credentials.outputs.ready == 'true'
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.APP_ID }}
+          app-id: ${{ vars.MARKETPLACE_SYNC_APP_ID }}
           private-key: ${{ secrets.MARKETPLACE_SYNC_APP_PRIVATE_KEY }}
           owner: ora-space
           repositories: marketplace
