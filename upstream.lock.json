@@ -1,16 +1,16 @@
 {
   "adapter": {
     "name": "@agentclientprotocol/codex-acp",
-    "version": "1.10.0",
-    "integrity": "sha512-b4dDCPkH/GgHRb3JelXz4QdNirdoTjO3yYM1ImUJMxVXxgZLZMguEXNhZOH2G755UKzf6ZypiiC7UHe3fKgp2Q==",
-    "tarball": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-1.10.0.tgz"
+    "version": "1.11.0",
+    "integrity": "sha512-opPKsRaekgdmQpOpHrR0EEDn9chgtiN+b+h0V78fTuQP84TNzB7vrn3EtKODwbiJQTBHJAlynjSFQazFfaT+VQ==",
+    "tarball": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-1.11.0.tgz"
   },
   "codex": {
     "name": "@openai/codex",
     "version": "0.153.4",
     "integrity": "sha512-wbHDmit7S/YvBGVX1DQmk13xtWblZ2cApeJ/pB7xDZ10Cna+DZc5ij7f0F4OxdsXN4FW1oLT48OpogUI1+8Y2w==",
     "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.153.4.tgz",
-    "requirement": "^0.153.3"
+    "requirement": "^0.153.4"
   },
   "platforms": {
     "win32-x64": {
