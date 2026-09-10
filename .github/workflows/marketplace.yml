@@ -2,13 +2,14 @@ name: Marketplace
 
 # Opens — or refreshes — the pull request that publishes the latest release into
 # `ora-space/marketplace`. Publishing is kept separate from releasing so a bad release can be
-# superseded before anyone installs it, and so an entry that drifted behind is picked up nightly.
+# superseded before anyone installs it. Runs the moment `release.yml` publishes a GitHub Release,
+# and can also be run by hand — for the latest release or a specific tag — to pick up an entry that
+# drifted behind for any other reason.
 # Nothing is merged here; a human still reviews the PR in the marketplace repo.
 
 on:
-  schedule:
-    # 03:00 Beijing time (19:00 UTC), an hour after `upstream.yml`, so a nightly bump has released.
-    - cron: "0 19 * * *"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -32,7 +33,7 @@ jobs:
     steps:
       # `MARKETPLACE_SYNC_APP_ID` and `MARKETPLACE_SYNC_APP_PRIVATE_KEY` are organization-level and shared with selected repositories
       # only, so this repository can be off that list — expected configuration waiting on an owner,
-      # not a broken workflow. Without this, every nightly run would fail on an opaque token error.
+      # not a broken workflow. Without this, every run would fail on an opaque token error.
       # `secrets` cannot be read from a step `if:`, hence the bounce through an output.
       - name: Check for the marketplace credentials
         id: credentials
@@ -68,9 +69,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          TAG="${REQUESTED_TAG:-}"
+          TAG="${REQUESTED_TAG:-${EVENT_TAG:-}}"
           if [ -z "$TAG" ]; then
             TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
           fi
@@ -132,7 +134,7 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/ora-space/marketplace.git" marketplace
 
       # One branch per plugin, force-pushed. Branching per tag would leave an open PR per release
-      # as soon as two nights in a row produced one, all conflicting on the same file.
+      # as soon as two releases in a row produced one, all conflicting on the same file.
       - name: Open or refresh the marketplace pull request
         if: steps.credentials.outputs.ready == 'true'
         env:
@@ -165,7 +167,17 @@ jobs:
           mkdir -p "$DIR"
           cp ../dist/manifest.toml "${DIR}/orax.toml"
           cp ../README.md "${DIR}/README.md"
-          cp ../logo.svg "${DIR}/logo.svg"
+
+          # The bare logo, plus any themed variant (`logo.dark.svg`) and raster format the plugin
+          # carries. Cleared first so a variant the plugin has since dropped does not linger.
+          rm -f "${DIR}"/logo.*
+          shopt -s nullglob
+          for f in ../logo.svg ../logo.*.svg ../logo.png ../logo.*.png ../logo.jpg ../logo.*.jpg \
+            ../logo.jpeg ../logo.*.jpeg ../logo.webp ../logo.*.webp; do
+            cp "$f" "${DIR}/$(basename "$f")"
+          done
+          shopt -u nullglob
+
           git add "$DIR"
           if git diff --cached --quiet; then
             echo "the marketplace entry is already identical to ${TAG}"
@@ -180,7 +192,7 @@ jobs:
           SUBJECT="chore: update ${TITLE} to ${TAG}"
           BODY=$(printf '%s\n\n%s\n\n%s\n' \
             "Publishes \`${ID}\` ${TAG}, from [that release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG})." \
-            "\`orax.toml\` is the release's own \`manifest.toml\` copied verbatim, so the per-target download URLs and SHA-256 digests are the ones the release workflow recorded for the artifacts it published. \`README.md\` and \`logo.svg\` are copied from the plugin repository at that tag." \
+            "\`orax.toml\` is the release's own \`manifest.toml\` copied verbatim, so the per-target download URLs and SHA-256 digests are the ones the release workflow recorded for the artifacts it published. \`README.md\` and its logo assets (\`logo.svg\`, any themed variant, and any raster format) are copied from the plugin repository at that tag." \
             "Opened automatically by \`.github/workflows/marketplace.yml\`.")
 
           NUMBER=$(gh pr list --repo ora-space/marketplace --state open --head "$BRANCH" --json number --jq '.[0].number // empty')
