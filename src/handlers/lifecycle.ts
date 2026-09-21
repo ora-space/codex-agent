@@ -1,6 +1,9 @@
 import type { AgentStartContext } from "@ora-space/plugin-sdk";
 import { INVALID_PARAMS, PluginMethodError } from "@ora-space/plugin-sdk";
 import type { CodexClient } from "../services/codex-client.ts";
+import { logger } from "../services/log.ts";
+
+const log = logger("lifecycle");
 
 /**
  * Serves `agent/start` by bringing the Codex ACP adapter up in the host's working directory.
@@ -14,12 +17,16 @@ export async function startCodex(
   context: AgentStartContext,
 ): Promise<void> {
   if (context.cwd.trim() === "") {
+    log.warn("agent/start refused: empty cwd");
     throw new PluginMethodError(
       INVALID_PARAMS,
       "agent/start requires a non-empty cwd",
     );
   }
   await client.start(context.cwd);
+  log.info("Codex ACP adapter started for agent/start", {
+    context: { cwd: context.cwd },
+  });
 }
 
 /**
@@ -28,6 +35,10 @@ export async function startCodex(
  * A later `agent/start` respawns it, which is what lets Ora restart a failed agent without paying
  * for a new plugin handshake.
  */
-export function stopCodex(client: CodexClient): Promise<void> {
-  return client.stop();
+export async function stopCodex(client: CodexClient): Promise<void> {
+  const wasRunning = client.running;
+  await client.stop();
+  log.info("Codex ACP adapter stopped for agent/stop", {
+    context: { wasRunning },
+  });
 }
