@@ -26,6 +26,11 @@ export default {
       bun: "bun-linux-x64-baseline",
       runtime: "linux-x64",
     },
+    "aarch64-unknown-linux-gnu": {
+      os: "linux",
+      bun: "bun-linux-arm64",
+      runtime: "linux-arm64",
+    },
   },
   binaryPath: bundledAdapterPath,
 } satisfies BundleConfig;

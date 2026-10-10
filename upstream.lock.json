@@ -33,6 +33,13 @@
       "integrity": "sha512-xlHydfOksnNt/qz4BEVFvjMWunweaVSNtha/DkVUwWZnVZxbqiJwsXSl2iZDk04b6k/g0OI7jU06XqzHB2s5og==",
       "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-linux-x64.tgz",
       "runtime": "linux-x64"
+    },
+    "linux-arm64": {
+      "name": "@openai/codex",
+      "version": "0.159.3-linux-arm64",
+      "integrity": "sha512-84C1yhAI+i0hqh77Akp/Ma09Z4d5oLKcZKqW1WZpEDh8bKbNvvbNEd6pE+GMUe2Kwg7jCbuvkRNH1zgK+SCM3Q==",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-linux-arm64.tgz",
+      "runtime": "linux-arm64"
     }
   }
 }
