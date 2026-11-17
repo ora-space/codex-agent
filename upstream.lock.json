@@ -1,9 +1,9 @@
 {
   "adapter": {
     "name": "@agentclientprotocol/codex-acp",
-    "version": "2.6.0",
-    "integrity": "sha512-/PBsd0H6URy4bhXhAeXqwb7RqctbXfNceRihAh6nDmn5HJ873uzoHvHxF45YmeWfgOKKRrNRLZjYsket2a7EsQ==",
-    "tarball": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-2.6.0.tgz"
+    "version": "2.7.0",
+    "integrity": "sha512-fFFU/tV5DltBzN4cZIh5tJEWGTZFXbwHU7I5RxPkmrGraw3jhAIuvTeudYwK3wAbV311WgIi7qONl2I8uRV2jw==",
+    "tarball": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-2.7.0.tgz"
   },
   "codex": {
     "name": "@openai/codex",
